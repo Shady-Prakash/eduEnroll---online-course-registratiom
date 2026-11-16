@@ -1,0 +1,220 @@
+datasource db {
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+model Course {
+  id          String  @id @default(uuid())
+  userId      String
+  title       String  @db.Text
+  /// Moodle-style unit code, e.g. "ICT726"
+  code        String? @db.VarChar(20)
+  /// Teaching period, e.g. "Trimester 3, 2026"
+  term        String? @db.VarChar(60)
+  /// Udemy-style one-line pitch shown under the title
+  subtitle    String? @db.VarChar(160)
+  /// "beginner" | "intermediate" | "advanced" | "all"
+  level       String? @db.VarChar(20)
+  /// Learning outcomes ("What you'll learn"), stored as a JSON array of strings
+  outcomes    Json?
+  description String? @db.Text
+  imageUrl    String? @db.Text
+  price       Float?
+  /// Limited-time offer price (shown with the original price struck through)
+  salePrice   Float?
+  saleEndsAt  DateTime?
+  isPublished Boolean @default(false)
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  chapters    Chapter[]
+  sections    Section[]
+  instructors CourseInstructor[]
+  reviews     Review[]
+  attachments Attachment[]
+  purchases   Purchase[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@fulltext([title])
+}
+
+model Category {
+  id      String   @id @default(uuid())
+  name    String   @unique
+  courses Course[]
+}
+
+model Attachment {
+  id   String @id @default(uuid())
+  name String
+  url  String @db.Text
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courseId])
+}
+
+model Chapter {
+  id          String  @id @default(uuid())
+  title       String
+  description String? @db.Text
+  videoUrl    String? @db.Text
+  position    Int
+  isPublished Boolean @default(false)
+  isFree      Boolean @default(false)
+  /// Video length in seconds (filled from Mux once the video is processed)
+  duration    Int?
+
+  muxData MuxData?
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  /// Optional grouping, like Udemy sections / Moodle topics
+  sectionId String?
+  section   Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  userProgress UserProgress[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courseId])
+  @@index([sectionId])
+}
+
+model Section {
+  id       String @id @default(uuid())
+  title    String @db.VarChar(160)
+  position Int
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  chapters Chapter[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courseId])
+}
+
+model MuxData {
+  id         String  @id @default(uuid())
+  assetId    String
+  playbackId String?
+
+  chapterId String  @unique
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+}
+
+model UserProgress {
+  id     String @id @default(uuid())
+  userId String
+
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  isCompleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, chapterId])
+  @@index([chapterId])
+}
+
+model Purchase {
+  id     String @id @default(uuid())
+  userId String
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  /// "purchase" = bought outright (lifetime) · "subscription" = enrolled via eduEnroll Pass
+  source String @default("purchase") @db.VarChar(20)
+  /// Amount actually paid (USD) for one-time purchases
+  amount Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model StripeCustomer {
+  id               String @id @default(uuid())
+  userId           String @unique
+  stripeCustomerId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// eduEnroll Pass: monthly subscription that unlocks every published course.
+model Subscription {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  stripeSubscriptionId String   @unique
+  status               String   @db.VarChar(30) // trialing | active | past_due | canceled | ...
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Co-teachers on a course. The course owner stays on Course.userId.
+model CourseInstructor {
+  id       String @id @default(uuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String
+
+  createdAt DateTime @default(now())
+
+  @@unique([courseId, userId])
+  @@index([userId])
+}
+
+model Review {
+  id       String  @id @default(uuid())
+  courseId String
+  course   Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String
+  rating   Int     /// 1–5
+  comment  String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([courseId, userId])
+  @@index([courseId])
+}
+
+/// Public instructor profile (headline, bio, links). Name & photo come from Clerk.
+model TeacherProfile {
+  userId   String  @id
+  headline String? @db.VarChar(80)
+  bio      String? @db.Text
+  website  String? @db.VarChar(200)
+  linkedin String? @db.VarChar(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
